@@ -2,31 +2,24 @@ import Link from "next/link";
 import { prisma } from "@/lib/db/prisma";
 import { deleteUserAction } from "./actions";
 import ConfirmSubmit from "@/app/components/ConfirmSubmit";
-import MembersRefresh from "@/app/components/MembersRefresh";
+import { MemberSearch } from "../components/members/MemberSearch";
+import { listMembersAction } from "./actions";
 
-export default async function Page() {
-  const users = await prisma.user.findMany({
-    orderBy: { userNo: "desc" },
-    select: {
-      userNo: true,
-      userId: true,
-      userNick: true,
-      userEmail: true,
-      userPhone: true,
-      userJob: true,
-      create_at: true,
-    },
-  });
+export default async function Page({
+  searchParams,
+}: {
+  searchParams: Promise<{ query?: string }>;
+}) {
+  const { query } = await searchParams;
+
+  const users = await listMembersAction(query);
 
   return (
     <div className="p-6 space-y-4">
       <div className="flex items-center justify-between">
         <h1 className="text-xl font-semibold">회원목록</h1>
         <div className="flex gap-2 items-center">
-          <MembersRefresh /> {/* ✅ 추가 */}
-          <Link className="border px-3 py-2 rounded" href="/members/signup">
-            회원추가
-          </Link>
+          <MemberSearch defaultQuery={query ?? ""} />
         </div>
       </div>
 

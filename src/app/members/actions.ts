@@ -18,6 +18,7 @@ import {
 
 // ✅ P2002(유니크 충돌) 처리를 위해 Prisma 에러 타입 사용
 import { Prisma } from "@/generated/prisma/client";
+import { revalidatePath } from "next/cache";
 
 /* =========================================================
  * 공용 타입
@@ -392,5 +393,41 @@ export async function deleteUserAction(formData: FormData) {
 
   await prisma.user.delete({ where: { userNo } });
 
+  revalidatePath("/members");
   redirect("/members");
+}
+
+/* =========================================================
+ * 6) 회원조회(검색)
+ * ======================================================= */
+export async function listMembersAction(query?: string) {
+  const q = (query ?? "").trim();
+
+  return prisma.user.findMany({
+    /*where: q
+      ? {
+          // ✅ query=아이디 검색 (부분검색)
+          userId: { contains: q },
+          // 정확히 일치 검색을 원하면 아래로 변경:
+          // userId: { equals: q },
+        }
+      : undefined,*/
+    where: {
+      OR: [
+        { userId: { contains: q } },
+        { userNick: { contains: q } },
+        { userEmail: { contains: q } },
+      ],
+    },
+    orderBy: { userNo: "desc" },
+    select: {
+      userNo: true,
+      userId: true,
+      userNick: true,
+      userEmail: true,
+      userPhone: true,
+      userJob: true,
+      create_at: true,
+    },
+  });
 }
