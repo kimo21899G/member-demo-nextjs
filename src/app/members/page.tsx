@@ -24,7 +24,7 @@ export default async function Page() {
         <h1 className="text-xl font-semibold">회원목록</h1>
         <div className="flex gap-2 items-center">
           <MembersRefresh /> {/* ✅ 추가 */}
-          <Link className="border px-3 py-2 rounded" href="/members/register">
+          <Link className="border px-3 py-2 rounded" href="/members/signup">
             회원추가
           </Link>
         </div>

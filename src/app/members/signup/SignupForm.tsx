@@ -39,6 +39,7 @@ export default function SignupForm() {
     msg: string;
     value: string;
   } | null>(null);
+
   const [nickCheck, setNickCheck] = useState<{
     ok: boolean;
     msg: string;

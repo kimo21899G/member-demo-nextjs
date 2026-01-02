@@ -1,9 +1,27 @@
 "use server";
 
-import { prisma } from "@/lib/db/prisma";
-import { validateSignup } from "@/lib/validators";
-import bcrypt from "bcryptjs";
 import { redirect } from "next/navigation";
+import bcrypt from "bcryptjs";
+import { prisma } from "@/lib/db/prisma";
+
+// ✅ validators는 한 번에 상단 import로 정리
+import {
+  validateSignup,
+  reUserId,
+  reUserNick,
+  reEmail,
+  rePhone,
+  rePwdAllowed,
+  rePwdHasAlpha,
+  rePwdHasDigit,
+} from "@/lib/validators";
+
+// ✅ P2002(유니크 충돌) 처리를 위해 Prisma 에러 타입 사용
+import { Prisma } from "@/generated/prisma/client";
+
+/* =========================================================
+ * 공용 타입
+ * ======================================================= */
 
 export type SignupValues = {
   userId: string;
@@ -19,14 +37,59 @@ export type SignupState =
       ok: false;
       msg: string;
       fieldErrors?: Record<string, string>;
-      values?: SignupValues; // ✅ 비밀번호 제외 값만 유지용으로 반환
+      values?: SignupValues; // ✅ 비밀번호 제외 값만 유지용
     };
 
+export type UpdateState =
+  | { ok: true; msg: string }
+  | { ok: false; msg: string; fieldErrors?: Record<string, string> };
+
+/* =========================================================
+ * 공용 헬퍼
+ * ======================================================= */
+
+function trimStr(v: unknown) {
+  return String(v ?? "").trim();
+}
+
+function isP2002UniqueError(e: unknown) {
+  return (
+    e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002"
+  );
+}
+
+function getUniqueTargets(e: unknown): string[] {
+  if (!(e instanceof Prisma.PrismaClientKnownRequestError)) return [];
+  const target = (e.meta as any)?.target;
+  if (!target) return [];
+  return Array.isArray(target) ? target.map(String) : [String(target)];
+}
+
+/** P2002 발생 시 어떤 필드가 중복인지 추정해서 fieldErrors로 변환 */
+function mapP2002ToFieldErrors(e: unknown) {
+  const targets = getUniqueTargets(e);
+  const fe: Record<string, string> = {};
+
+  // Prisma가 target에 모델 필드명을 주는 경우가 많음
+  if (targets.includes("userId")) fe.userId = "이미 등록된 아이디입니다.";
+  if (targets.includes("userNick")) fe.userNick = "이미 등록된 닉네임입니다.";
+
+  // target이 비어있거나 예상과 다르면 generic 처리
+  return fe;
+}
+
+/* =========================================================
+ * 1) 회원가입: 중복확인 버튼
+ * - 체크리스트 #2: 가입 검증과 동일한 정규식 적용
+ * ======================================================= */
+
 export async function checkUserId(userId: string) {
-  const id = (userId ?? "").trim();
-  // 형식 검증은 서버에서도 1차로 해주는 편이 안전
-  if (id.length < 4 || id.length > 20)
-    return { ok: false, msg: "아이디 길이가 올바르지 않습니다." };
+  const id = trimStr(userId);
+
+  // ✅ 가입 validateSignup과 같은 규칙 사용
+  if (!reUserId.test(id)) {
+    return { ok: false, msg: "아이디 규칙이 올바르지 않습니다." };
+  }
 
   const exists = await prisma.user.findUnique({ where: { userId: id } });
   return exists
@@ -35,9 +98,12 @@ export async function checkUserId(userId: string) {
 }
 
 export async function checkUserNick(userNick: string) {
-  const nick = (userNick ?? "").trim();
-  if (nick.length < 2 || nick.length > 12)
-    return { ok: false, msg: "닉네임 길이가 올바르지 않습니다." };
+  const nick = trimStr(userNick);
+
+  // ✅ 가입 validateSignup과 같은 규칙 사용
+  if (!reUserNick.test(nick)) {
+    return { ok: false, msg: "닉네임 규칙이 올바르지 않습니다." };
+  }
 
   const exists = await prisma.user.findUnique({ where: { userNick: nick } });
   return exists
@@ -45,24 +111,30 @@ export async function checkUserNick(userNick: string) {
     : { ok: true, msg: "등록 가능한 닉네임입니다." };
 }
 
+/* =========================================================
+ * 2) 회원가입 액션
+ * - 체크리스트 #3: hidden 값 비교 시 trim 통일
+ * - 체크리스트 #4: create 시 P2002 처리
+ * ======================================================= */
+
 export async function signupAction(
   _prev: SignupState | null,
   formData: FormData
 ): Promise<SignupState> {
-  const userId = String(formData.get("userId") ?? "").trim();
-  const userNick = String(formData.get("userNick") ?? "").trim();
-  const userEmail = String(formData.get("userEmail") ?? "").trim();
-  const userPhone = String(formData.get("userPhone") ?? "").trim();
-  const userJob = String(formData.get("userJob") ?? "").trim();
+  const userId = trimStr(formData.get("userId"));
+  const userNick = trimStr(formData.get("userNick"));
+  const userEmail = trimStr(formData.get("userEmail"));
+  const userPhone = trimStr(formData.get("userPhone"));
+  const userJob = trimStr(formData.get("userJob"));
 
   const userPwd = String(formData.get("userPwd") ?? "");
   const userPwd2 = String(formData.get("userPwd2") ?? "");
 
-  // 중복확인 상태
+  // 중복확인 상태 (hidden)
   const idCheckedOk = String(formData.get("idCheckedOk") ?? "") === "true";
-  const idCheckedValue = String(formData.get("idCheckedValue") ?? "");
+  const idCheckedValue = trimStr(formData.get("idCheckedValue")); // ✅ trim 통일
   const nickCheckedOk = String(formData.get("nickCheckedOk") ?? "") === "true";
-  const nickCheckedValue = String(formData.get("nickCheckedValue") ?? "");
+  const nickCheckedValue = trimStr(formData.get("nickCheckedValue")); // ✅ trim 통일
 
   const values: SignupValues = {
     userId,
@@ -72,7 +144,7 @@ export async function signupAction(
     userJob,
   };
 
-  // 서버 검증(기존 규칙)
+  // 1) 서버 검증(규칙)
   const v = validateSignup({
     userId,
     userNick,
@@ -81,9 +153,10 @@ export async function signupAction(
     userPwd,
     userJob: userJob || null,
   });
+
   const errors: Record<string, string> = { ...(v.errors ?? {}) };
 
-  // ✅ 비밀번호 재입력 검증
+  // 2) 비밀번호 재입력 확인
   if (userPwd !== userPwd2) {
     errors.userPwd2 = "비밀번호가 일치하지 않습니다.";
   }
@@ -97,7 +170,7 @@ export async function signupAction(
     };
   }
 
-  // ✅ 중복확인 강제(값 변경 방지)
+  // 3) 중복확인 강제 + 값 변경 방지
   if (!idCheckedOk || idCheckedValue !== userId) {
     return {
       ok: false,
@@ -106,6 +179,7 @@ export async function signupAction(
       values,
     };
   }
+
   if (!nickCheckedOk || nickCheckedValue !== userNick) {
     return {
       ok: false,
@@ -115,55 +189,68 @@ export async function signupAction(
     };
   }
 
-  // 최종 중복 체크(레이스/우회 방지)
+  // 4) 최종 중복 체크(우회/레이스 방지) — (여전히 중요)
   const [idExists, nickExists] = await Promise.all([
     prisma.user.findUnique({ where: { userId } }),
     prisma.user.findUnique({ where: { userNick } }),
   ]);
-  if (idExists)
+  if (idExists) {
     return {
       ok: false,
       msg: "이미 등록된 아이디입니다.",
       fieldErrors: { userId: "중복" },
       values,
     };
-  if (nickExists)
+  }
+  if (nickExists) {
     return {
       ok: false,
       msg: "이미 등록된 닉네임입니다.",
       fieldErrors: { userNick: "중복" },
       values,
     };
+  }
 
-  const hash = await bcrypt.hash(userPwd, 10);
+  // 5) 저장(P2002 처리 포함)
+  try {
+    const hash = await bcrypt.hash(userPwd, 10);
 
-  await prisma.user.create({
-    data: {
-      userId,
-      userNick,
-      userEmail,
-      userPhone,
-      userPwd: hash,
-      userJob: userJob === "" ? null : userJob,
-    },
-  });
+    await prisma.user.create({
+      data: {
+        userId,
+        userNick,
+        userEmail,
+        userPhone,
+        userPwd: hash,
+        userJob: userJob === "" ? null : userJob,
+      },
+    });
+  } catch (e) {
+    // ✅ 체크리스트 #4: 유니크 충돌(P2002) 처리
+    if (isP2002UniqueError(e)) {
+      const fe = mapP2002ToFieldErrors(e);
+      const msg =
+        fe.userId || fe.userNick
+          ? "이미 등록된 값이 있습니다."
+          : "중복된 값이 존재합니다. 입력값을 확인해주세요.";
+      return { ok: false, msg, fieldErrors: fe, values };
+    }
+    throw e;
+  }
 
-  // ✅ 성공 시 자동 이동
+  // 성공 시 이동
   redirect("/members");
 }
 
-import {
-  reUserNick,
-  reEmail,
-  rePhone,
-  rePwdAllowed,
-  rePwdHasAlpha,
-  rePwdHasDigit,
-} from "@/lib/validators";
+/* =========================================================
+ * 3) 수정: 닉네임 중복확인(자기 자신 제외)
+ * - 체크리스트 #2: 정규식 동일 적용
+ * ======================================================= */
 
 export async function checkUserNickForUpdate(userNo: number, userNick: string) {
-  const nick = (userNick ?? "").trim();
+  const nick = trimStr(userNick);
 
+  // ✅ 가입/수정 동일 규칙
   if (!reUserNick.test(nick)) {
     return { ok: false as const, msg: "닉네임 규칙이 올바르지 않습니다." };
   }
@@ -176,9 +263,11 @@ export async function checkUserNickForUpdate(userNo: number, userNick: string) {
   return { ok: true as const, msg: "등록 가능한 닉네임입니다." };
 }
 
-export type UpdateState =
-  | { ok: true; msg: string }
-  | { ok: false; msg: string; fieldErrors?: Record<string, string> };
+/* =========================================================
+ * 4) 수정 액션
+ * - 체크리스트 #3: nickCheckedValue trim 통일
+ * - 체크리스트 #4: update 시 P2002 처리
+ * ======================================================= */
 
 export async function updateUserAction(
   _prev: UpdateState | null,
@@ -189,20 +278,20 @@ export async function updateUserAction(
     return { ok: false, msg: "잘못된 요청입니다." };
   }
 
-  const userNick = String(formData.get("userNick") ?? "").trim();
-  const userEmail = String(formData.get("userEmail") ?? "").trim();
-  const userPhone = String(formData.get("userPhone") ?? "").trim();
-  const userJobRaw = String(formData.get("userJob") ?? "").trim();
+  const userNick = trimStr(formData.get("userNick"));
+  const userEmail = trimStr(formData.get("userEmail"));
+  const userPhone = trimStr(formData.get("userPhone"));
+  const userJobRaw = trimStr(formData.get("userJob"));
   const userJob = userJobRaw === "" ? null : userJobRaw;
 
   const userPwd = String(formData.get("userPwd") ?? ""); // optional
 
   // 원래 닉네임(변경 감지용)
-  const originalNick = String(formData.get("originalNick") ?? "");
+  const originalNick = trimStr(formData.get("originalNick"));
 
   // 닉네임 중복확인 상태
   const nickCheckedOk = String(formData.get("nickCheckedOk") ?? "") === "true";
-  const nickCheckedValue = String(formData.get("nickCheckedValue") ?? "");
+  const nickCheckedValue = trimStr(formData.get("nickCheckedValue")); // ✅ trim 통일
 
   const errors: Record<string, string> = {};
 
@@ -257,7 +346,7 @@ export async function updateUserAction(
     return { ok: false, msg: "입력값을 확인해주세요.", fieldErrors: errors };
   }
 
-  // 서버 최종 중복 체크(우회 방지)
+  // 최종 중복 체크(우회 방지)
   const exists = await prisma.user.findUnique({ where: { userNick } });
   if (exists && exists.userNo !== userNo) {
     return {
@@ -267,19 +356,35 @@ export async function updateUserAction(
     };
   }
 
-  await prisma.user.update({
-    where: { userNo },
-    data: {
-      userNick,
-      userEmail,
-      userPhone,
-      userJob,
-      ...(userPwd ? { userPwd: await bcrypt.hash(userPwd, 10) } : {}),
-    },
-  });
+  // update (P2002 처리 포함)
+  try {
+    await prisma.user.update({
+      where: { userNo },
+      data: {
+        userNick,
+        userEmail,
+        userPhone,
+        userJob,
+        ...(userPwd ? { userPwd: await bcrypt.hash(userPwd, 10) } : {}),
+      },
+    });
+  } catch (e) {
+    if (isP2002UniqueError(e)) {
+      const fe = mapP2002ToFieldErrors(e);
+      const msg = fe.userNick
+        ? "이미 등록된 닉네임입니다."
+        : "중복된 값이 존재합니다. 입력값을 확인해주세요.";
+      return { ok: false, msg, fieldErrors: fe };
+    }
+    throw e;
+  }
 
   redirect("/members");
 }
+
+/* =========================================================
+ * 5) 삭제 액션
+ * ======================================================= */
 
 export async function deleteUserAction(formData: FormData) {
   const userNo = Number(formData.get("userNo"));
@@ -287,6 +392,5 @@ export async function deleteUserAction(formData: FormData) {
 
   await prisma.user.delete({ where: { userNo } });
 
-  // 목록으로 새로고침
   redirect("/members");
 }
