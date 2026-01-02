@@ -1,3 +1,10 @@
+/*
+아래는 회원정보를 수정하는 /appmembers/[id]/edit/page.tsx 파일 임
+회원번호 db필드는 userNo 인데 나는 [id] 로 일단 받고 
+const { id } = await params;
+const userNo = Number(id); << 이렇게 타입변환을 했는데 올바른 방법은?
+*/
+
 import { prisma } from "@/lib/db/prisma";
 import { notFound } from "next/navigation";
 import EditForm from "./EditForm";
@@ -12,7 +19,7 @@ export default async function Page({
   const { id } = await params;
   const userNo = Number(id);
 
-  if (!Number.isFinite(userNo) || userNo <= 0) notFound();
+  if (!Number.isInteger(userNo) || userNo <= 0) notFound();
 
   const user = await prisma.user.findUnique({
     where: { userNo },

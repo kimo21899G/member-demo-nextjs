@@ -1,6 +1,6 @@
 // /lib/validators.ts 파일
 
-export const reUserId = /^[a-z][a-z0-9!@#$%^&*()_-]{3,19}$/;
+export const reUserId = /^[a-z][a-z0-9!@#$%^&*()_-]{4,20}$/;
 // 4~20, 소문자로 시작, 이후 소문자/숫자/특수(!@#$%^&*()_-) 허용
 
 export const reUserNick = /^(?=.{2,12}$)[A-Za-z가-힣][A-Za-z0-9가-힣_-]*$/;
