@@ -1,0 +1,25 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+enum UserRole {
+  USER
+  ADMIN
+}
+
+model User {
+  userNo    Int      @id @default(autoincrement())
+  userId    String   @unique
+  userNick  String   @unique
+  userEmail String
+  userPhone String
+  userPwd   String   // bcrypt hash
+  userJob   String?
+  role      UserRole @default(USER)
+  create_at DateTime @default(now())
+}
